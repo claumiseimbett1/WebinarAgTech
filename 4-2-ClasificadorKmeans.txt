@@ -1,0 +1,80 @@
+// 1. Área de interés (Turipaná, Córdoba)
+var aoi = ee.Geometry.Rectangle([-75.89, 8.88, -75.86, 8.90]);
+Map.centerObject(aoi, 14);
+
+// 2. Enmascarar nubes y seleccionar solo bandas necesarias
+function maskS2clouds(image) {
+  var qa = image.select('SCL');
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+               .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  return image.updateMask(mask)
+              .select(['B2', 'B3', 'B4', 'B8'])  // Solo las bandas útiles
+              .copyProperties(image, ['system:time_start']);
+}
+
+// 3. Cargar imágenes Sentinel-2 SR
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterDate('2024-01-01', '2024-03-31')
+  .filterBounds(aoi)
+  .map(maskS2clouds);
+
+// 4. Crear imagen compuesta (mediana)
+var composite = s2.median().clip(aoi);
+
+// 5. Visualización RGB
+Map.addLayer(composite, {bands: ['B4', 'B3', 'B2'], min: 0, max: 0.3}, 'Sentinel-2 RGB');
+
+// 6. Crear muestras de entrenamiento (puedes modificarlas o cargarlas)
+var bosque = ee.FeatureCollection([
+  ee.Feature(ee.Geometry.Point([-75.88, 8.89]), {'class': 0}),
+  ee.Feature(ee.Geometry.Point([-75.879, 8.891]), {'class': 0})
+]);
+
+var pasto = ee.FeatureCollection([
+  ee.Feature(ee.Geometry.Point([-75.87, 8.89]), {'class': 1}),
+  ee.Feature(ee.Geometry.Point([-75.871, 8.891]), {'class': 1})
+]);
+
+var suelo = ee.FeatureCollection([
+  ee.Feature(ee.Geometry.Point([-75.86, 8.89]), {'class': 2}),
+  ee.Feature(ee.Geometry.Point([-75.861, 8.891]), {'class': 2})
+]);
+
+var muestras = bosque.merge(pasto).merge(suelo);
+
+// 7. Tomar muestras de la imagen compuesta
+var training = composite.sampleRegions({
+  collection: muestras,
+  properties: ['class'],
+  scale: 10
+});
+
+// 8. Entrenar clasificador Random Forest
+var classifier = ee.Classifier.smileRandomForest(50).train({
+  features: training,
+  classProperty: 'class',
+  inputProperties: composite.bandNames()
+});
+
+// 9. Clasificar la imagen
+var classified = composite.classify(classifier);
+
+// 10. Visualizar clasificación
+Map.addLayer(classified,
+  {min: 0, max: 2, palette: ['006400', '7FFF00', 'DAA520']},
+  'Clasificación Random Forest');
+  
+  // 11. Exportar la imagen clasificada a Google Drive
+Export.image.toDrive({
+  image: classified,
+  description: 'Clasificacion_RF_Turipana',
+  folder: 'GEE_Export_Webinar',  // Cambia si deseas otra carpeta en tu Drive
+  fileNamePrefix: 'clasificacion_turipana_rf_2024',
+  region: aoi,
+  scale: 10,
+  crs: 'EPSG:4326',
+  maxPixels: 1e13
+});
+

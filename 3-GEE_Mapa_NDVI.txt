@@ -1,0 +1,35 @@
+var aoi = ee.Geometry.Rectangle([-75.89, 8.88, -75.86, 8.90]);
+
+var sentinel = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+  .filterDate('2022-12-01', '2024-03-01')
+  .filterBounds(aoi)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .map(function(img) {
+    var ndvi = img.normalizedDifference(['B8', 'B4']).rename('NDVI');
+    return ndvi.copyProperties(img, ['system:time_start']);
+  });
+
+print("Número de imágenes encontradas:", sentinel.size());
+
+var imageCount = sentinel.size();
+var ndvi_mean = ee.Image(ee.Algorithms.If(
+  imageCount.gt(0),
+  sentinel.mean().clip(aoi),
+  ee.Image(0).rename('NDVI').clip(aoi)
+));
+
+Map.centerObject(aoi, 13);
+Map.addLayer(ndvi_mean, {
+  min: -0.2, 
+  max: 0.8, 
+  palette: ['red', 'orange', 'yellow', 'yellowgreen', 'green', 'darkgreen']
+}, 'NDVI');
+
+Export.image.toDrive({
+  image: ndvi_mean,
+  description: 'NDVI_Sentinel2',
+  folder: 'GEE_Export_Webinar',
+  region: aoi,
+  scale: 10,
+  fileFormat: 'GeoTIFF'
+});

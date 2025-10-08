@@ -1,0 +1,51 @@
+// 1. Área de interés: Turipaná
+var aoi = ee.Geometry.Rectangle([-75.89, 8.88, -75.86, 8.90]);
+Map.centerObject(aoi, 14);
+
+// 2. Función para enmascarar nubes en Sentinel-2
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+               .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  return image.updateMask(mask)
+              .select(['B8', 'B4']);  // B8 = NIR, B4 = Red
+}
+
+// 3. Colecciones multitemporales
+var s2_2023 = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterDate('2023-01-01', '2023-01-31')
+  .filterBounds(aoi)
+  .map(maskS2clouds)
+  .median()
+  .clip(aoi);
+
+var s2_2024 = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterDate('2024-01-01', '2024-01-31')
+  .filterBounds(aoi)
+  .map(maskS2clouds)
+  .median()
+  .clip(aoi);
+
+// 4. Calcular NDVI
+function calcNDVI(image) {
+  return image.normalizedDifference(['B8', 'B4']).rename('NDVI');
+}
+
+var ndvi_2023 = calcNDVI(s2_2023);
+var ndvi_2024 = calcNDVI(s2_2024);
+
+// 5. Calcular cambio de NDVI
+var cambioNDVI = ndvi_2024.subtract(ndvi_2023).rename('CambioNDVI');
+
+// 6. Visualización
+Map.addLayer(ndvi_2023, {min: 0, max: 1, palette: ['white', 'green']}, 'NDVI 2023');
+Map.addLayer(ndvi_2024, {min: 0, max: 1, palette: ['white', 'darkgreen']}, 'NDVI 2024');
+Map.addLayer(cambioNDVI, {min: -0.5, max: 0.5, palette: ['red', 'white', 'blue']}, 'Cambio NDVI');
+
+// 7. Umbralizar pérdida y ganancia
+var perdida = cambioNDVI.lt(-0.1);
+var ganancia = cambioNDVI.gt(0.1);
+Map.addLayer(perdida.updateMask(perdida), {palette: ['red']}, 'Pérdida Vegetación');
+Map.addLayer(ganancia.updateMask(ganancia), {palette: ['blue']}, 'Ganancia Vegetación');
